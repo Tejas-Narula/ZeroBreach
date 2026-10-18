@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Section } from './ui'
 
-const DEVICE_TYPES = ['laptop', 'workstation', 'server', 'database', 'firewall', 'router']
-const PROTOCOLS = ['HTTPS', 'HTTP', 'SSH', 'SQL', 'TCP', 'RDP', 'DNS']
-const ZONES = ['employee', 'dmz', 'internal', 'restricted', 'perimeter', 'management']
+const DEVICE_TYPES = ['server', 'database', 'laptop', 'workstation', 'firewall', 'router']
+const PROTOCOLS = ['HTTPS', 'SSH', 'SQL', 'TCP', 'HTTP', 'RDP']
+const ZONES = ['internal', 'restricted', 'dmz', 'employee', 'perimeter', 'management']
 
 export default function NetworkEditor({
   network,
@@ -19,7 +18,7 @@ export default function NetworkEditor({
   compromisedId,
   onClose,
 }) {
-  const [activeTab, setActiveTab] = useState('device') // 'device' | 'connection'
+  const [activeTab, setActiveTab] = useState(selectedEdge ? 'connection' : 'device')
 
   // Device form state
   const [deviceForm, setDeviceForm] = useState({
@@ -58,7 +57,12 @@ export default function NetworkEditor({
         setIsEditingDevice(true)
         setActiveTab('device')
         setFormError('')
+        return
       }
+    }
+    // If no node selected, stay in new device mode
+    if (!selectedNodeId) {
+      setIsEditingDevice(false)
     }
   }, [selectedNodeId, network])
 
@@ -117,23 +121,33 @@ export default function NetworkEditor({
           criticality: Number(deviceForm.criticality),
           zone: deviceForm.zone.trim(),
         })
+        // Saving unselects current device & closes/resets editor
+        onClose?.()
       } catch (err) {
         setFormError(err.message)
       }
     } else {
-      if (!deviceForm.id.trim()) {
-        setFormError('Device ID is required')
-        return
+      // Auto-generate ID if empty: e.g. server_3
+      let generatedId = deviceForm.id.trim()
+      if (!generatedId) {
+        const prefix = deviceForm.type || 'node'
+        let counter = (network?.nodes?.length || 0) + 1
+        generatedId = `${prefix}_${counter}`
+        while (network?.nodes?.some((n) => n.id === generatedId)) {
+          counter++
+          generatedId = `${prefix}_${counter}`
+        }
       }
+
       try {
         await onAddDevice({
-          id: deviceForm.id.trim(),
+          id: generatedId,
           name: deviceForm.name.trim(),
           type: deviceForm.type,
           criticality: Number(deviceForm.criticality),
           zone: deviceForm.zone.trim(),
         })
-        resetDeviceForm()
+        onClose?.()
       } catch (err) {
         setFormError(err.message)
       }
@@ -160,6 +174,7 @@ export default function NetworkEditor({
           business_critical: connForm.business_critical,
           disruption_cost: Number(connForm.disruption_cost),
         })
+        onClose?.()
       } catch (err) {
         setFormError(err.message)
       }
@@ -173,7 +188,7 @@ export default function NetworkEditor({
           business_critical: connForm.business_critical,
           disruption_cost: Number(connForm.disruption_cost),
         })
-        resetConnForm()
+        onClose?.()
       } catch (err) {
         setFormError(err.message)
       }
@@ -183,78 +198,75 @@ export default function NetworkEditor({
   const nodes = network?.nodes || []
 
   return (
-    <div className="border-b border-white/5 bg-[#12161c]">
-      <div className="flex items-center justify-between border-b border-white/5 px-4 py-2">
-        <div className="flex gap-2">
+    <div className="flex flex-col h-full">
+      {/* Tab Switcher & Close */}
+      <div className="flex items-center justify-between border-b border-white/5 px-4 py-2.5 bg-white/[0.02]">
+        <div className="flex gap-1.5">
           <button
+            type="button"
             onClick={() => { setActiveTab('device'); setFormError('') }}
             className={`rounded px-2.5 py-1 text-xs font-medium transition ${
-              activeTab === 'device' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              activeTab === 'device' ? 'bg-sky-600 text-white' : 'text-zinc-400 hover:text-zinc-200 bg-white/5'
             }`}
           >
-            {isEditingDevice ? 'Edit Device' : 'Add Device'}
+            {isEditingDevice ? 'Edit Device' : 'New Device'}
           </button>
           <button
+            type="button"
             onClick={() => { setActiveTab('connection'); setFormError('') }}
             className={`rounded px-2.5 py-1 text-xs font-medium transition ${
-              activeTab === 'connection' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              activeTab === 'connection' ? 'bg-sky-600 text-white' : 'text-zinc-400 hover:text-zinc-200 bg-white/5'
             }`}
           >
-            {isEditingConn ? 'Edit Connection' : 'Add Connection'}
+            {isEditingConn ? 'Edit Link' : 'New Link'}
           </button>
         </div>
+
         <button
+          type="button"
           onClick={onClose}
-          className="text-xs text-zinc-500 hover:text-zinc-300"
-          title="Close editor panel"
+          className="text-xs text-zinc-500 hover:text-zinc-200 px-1 py-0.5"
+          title="Done / Deselect"
         >
-          ✕
+          ✕ Done
         </button>
       </div>
 
-      <div className="p-4">
+      <div className="p-4 flex-1 overflow-y-auto space-y-4">
         {formError && (
-          <div className="mb-3 rounded bg-red-500/10 p-2 text-xs text-red-400">
+          <div className="rounded bg-red-500/10 border border-red-500/20 p-2 text-xs text-red-400">
             {formError}
           </div>
         )}
 
         {/* DEVICE FORM */}
         {activeTab === 'device' && (
-          <form onSubmit={handleDeviceSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">ID</label>
-                <input
-                  type="text"
-                  disabled={isEditingDevice}
-                  value={deviceForm.id}
-                  onChange={(e) => setDeviceForm({ ...deviceForm, id: e.target.value })}
-                  placeholder="e.g. srv_finance"
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none disabled:opacity-40"
-                  required
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Name</label>
-                <input
-                  type="text"
-                  value={deviceForm.name}
-                  onChange={(e) => setDeviceForm({ ...deviceForm, name: e.target.value })}
-                  placeholder="e.g. Finance App"
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none"
-                  required
-                />
-              </div>
+          <form onSubmit={handleDeviceSubmit} className="space-y-3.5">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              {isEditingDevice ? `Editing: ${deviceForm.name}` : 'Create New Device'}
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">
+                Device Name
+              </label>
+              <input
+                type="text"
+                value={deviceForm.name}
+                onChange={(e) => setDeviceForm({ ...deviceForm, name: e.target.value })}
+                placeholder="e.g. Core App Server"
+                className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500"
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Type</label>
                 <select
                   value={deviceForm.type}
                   onChange={(e) => setDeviceForm({ ...deviceForm, type: e.target.value })}
-                  className="w-full rounded bg-white/5 px-1.5 py-1 text-xs text-zinc-100 outline-none"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none"
                 >
                   {DEVICE_TYPES.map((t) => (
                     <option key={t} value={t} className="bg-zinc-900">{t}</option>
@@ -267,14 +279,18 @@ export default function NetworkEditor({
                 <select
                   value={deviceForm.criticality}
                   onChange={(e) => setDeviceForm({ ...deviceForm, criticality: Number(e.target.value) })}
-                  className="w-full rounded bg-white/5 px-1.5 py-1 text-xs text-zinc-100 outline-none font-mono"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none font-mono"
                 >
                   {[1, 2, 3, 4, 5].map((c) => (
-                    <option key={c} value={c} className="bg-zinc-900">{c} {c >= 4 ? '★' : ''}</option>
+                    <option key={c} value={c} className="bg-zinc-900">
+                      C{c} {c >= 4 ? '★ High Risk' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Zone</label>
                 <input
@@ -282,7 +298,7 @@ export default function NetworkEditor({
                   list="zones-list"
                   value={deviceForm.zone}
                   onChange={(e) => setDeviceForm({ ...deviceForm, zone: e.target.value })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none"
                 />
                 <datalist id="zones-list">
                   {ZONES.map((z) => (
@@ -290,70 +306,79 @@ export default function NetworkEditor({
                   ))}
                 </datalist>
               </div>
+
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">ID (Optional)</label>
+                <input
+                  type="text"
+                  disabled={isEditingDevice}
+                  value={deviceForm.id}
+                  onChange={(e) => setDeviceForm({ ...deviceForm, id: e.target.value })}
+                  placeholder="Auto-generated"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-40 font-mono"
+                />
+              </div>
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500"
-                >
-                  {isEditingDevice ? 'Update Device' : '+ Add Device'}
-                </button>
-                {isEditingDevice && (
-                  <button
-                    type="button"
-                    onClick={resetDeviceForm}
-                    className="rounded bg-white/5 px-2.5 py-1 text-xs text-zinc-400 hover:text-white"
-                  >
-                    New
-                  </button>
-                )}
-              </div>
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                type="submit"
+                className="w-full rounded bg-sky-600 py-1.5 text-xs font-medium text-white hover:bg-sky-500 transition"
+              >
+                {isEditingDevice ? 'Save & Close' : '+ Add Device'}
+              </button>
 
               {isEditingDevice && (
-                <div className="flex gap-1.5">
+                <div className="grid grid-cols-2 gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => onSetCompromised(deviceForm.id)}
-                    className={`rounded px-2 py-1 text-xs ${
+                    className={`rounded py-1.5 text-xs font-medium transition ${
                       compromisedId === deviceForm.id
-                        ? 'bg-red-500/20 text-red-300'
-                        : 'bg-white/5 text-zinc-400 hover:text-red-300'
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                        : 'bg-white/5 text-zinc-300 hover:text-red-300 border border-white/5'
                     }`}
-                    title="Designate as compromised starting point"
                   >
-                    Set Compromised
+                    {compromisedId === deviceForm.id ? '★ Compromised' : 'Set Compromised'}
                   </button>
+
                   <button
                     type="button"
                     onClick={() => {
                       if (window.confirm(`Delete device '${deviceForm.name}' (${deviceForm.id})?`)) {
                         onDeleteDevice(deviceForm.id)
-                        resetDeviceForm()
+                        onClose?.()
                       }
                     }}
-                    className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20"
+                    className="rounded bg-red-500/10 border border-red-500/20 py-1.5 text-xs text-red-400 hover:bg-red-500/20 transition"
                   >
-                    Delete
+                    Delete Device
                   </button>
                 </div>
               )}
             </div>
+
+            <p className="text-[10px] text-zinc-500 pt-2 border-t border-white/5">
+              Tip: Drag any device from the left Device Palette directly onto the canvas to place it at that location.
+            </p>
           </form>
         )}
 
         {/* CONNECTION FORM */}
         {activeTab === 'connection' && (
-          <form onSubmit={handleConnSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
+          <form onSubmit={handleConnSubmit} className="space-y-3.5">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              {isEditingConn ? `Editing: ${connForm.source} → ${connForm.target}` : 'Create Directed Connection'}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Source (Origin)</label>
                 <select
                   disabled={isEditingConn}
                   value={connForm.source}
                   onChange={(e) => setConnForm({ ...connForm, source: e.target.value })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none disabled:opacity-40"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-40"
                   required
                 >
                   <option value="">Select source...</option>
@@ -369,7 +394,7 @@ export default function NetworkEditor({
                   disabled={isEditingConn}
                   value={connForm.target}
                   onChange={(e) => setConnForm({ ...connForm, target: e.target.value })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none disabled:opacity-40"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-40"
                   required
                 >
                   <option value="">Select target...</option>
@@ -380,7 +405,7 @@ export default function NetworkEditor({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Protocol</label>
                 <input
@@ -388,7 +413,7 @@ export default function NetworkEditor({
                   list="proto-list"
                   value={connForm.protocol}
                   onChange={(e) => setConnForm({ ...connForm, protocol: e.target.value })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none"
                   required
                 />
                 <datalist id="proto-list">
@@ -403,24 +428,24 @@ export default function NetworkEditor({
                 <select
                   value={connForm.allowed ? 'allowed' : 'blocked'}
                   onChange={(e) => setConnForm({ ...connForm, allowed: e.target.value === 'allowed' })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none font-mono"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none font-mono"
                 >
                   <option value="allowed" className="bg-zinc-900">Allowed</option>
                   <option value="blocked" className="bg-zinc-900">Blocked</option>
                 </select>
               </div>
+            </div>
 
-              <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Disruption Cost</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  value={connForm.disruption_cost}
-                  onChange={(e) => setConnForm({ ...connForm, disruption_cost: Number(e.target.value) })}
-                  className="w-full rounded bg-white/5 px-2 py-1 text-xs text-zinc-100 outline-none font-mono"
-                />
-              </div>
+            <div>
+              <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Disruption Cost</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={connForm.disruption_cost}
+                onChange={(e) => setConnForm({ ...connForm, disruption_cost: Number(e.target.value) })}
+                className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none font-mono"
+              />
             </div>
 
             <div className="flex items-center gap-2 pt-0.5">
@@ -435,24 +460,13 @@ export default function NetworkEditor({
               </label>
             </div>
 
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="rounded bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500"
-                >
-                  {isEditingConn ? 'Update Link' : '+ Add Link'}
-                </button>
-                {isEditingConn && (
-                  <button
-                    type="button"
-                    onClick={resetConnForm}
-                    className="rounded bg-white/5 px-2.5 py-1 text-xs text-zinc-400 hover:text-white"
-                  >
-                    New
-                  </button>
-                )}
-              </div>
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                type="submit"
+                className="w-full rounded bg-sky-600 py-1.5 text-xs font-medium text-white hover:bg-sky-500 transition"
+              >
+                {isEditingConn ? 'Save & Close' : '+ Add Connection'}
+              </button>
 
               {isEditingConn && (
                 <button
@@ -460,15 +474,19 @@ export default function NetworkEditor({
                   onClick={() => {
                     if (window.confirm(`Delete connection ${connForm.source} → ${connForm.target}?`)) {
                       onDeleteConnection(connForm.source, connForm.target)
-                      resetConnForm()
+                      onClose?.()
                     }
                   }}
-                  className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400 hover:bg-red-500/20"
+                  className="w-full rounded bg-red-500/10 border border-red-500/20 py-1.5 text-xs text-red-400 hover:bg-red-500/20 transition"
                 >
-                  Delete Link
+                  Delete Connection
                 </button>
               )}
             </div>
+
+            <p className="text-[10px] text-zinc-500 pt-2 border-t border-white/5">
+              Tip: You can also connect devices by clicking and holding on a device, dragging to another device, and releasing!
+            </p>
           </form>
         )}
       </div>
