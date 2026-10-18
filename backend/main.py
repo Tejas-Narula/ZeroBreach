@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query, status
 from typing import Optional, List
+import networkx as nx
 
 from network import (
     create_demo_network,
@@ -33,6 +34,15 @@ app = FastAPI(
     title="Network Attack Impact Analyzer API",
     description="Defensive network simulation tool modeling attack blast radius, risk ranking, containment recommendations, and before/after impact comparison.",
     version="1.0.0",
+)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # In-memory graph state initialized on application start
@@ -78,6 +88,17 @@ def reset_network():
     graph = create_demo_network()
     return {
         "message": "Network reset to demo state successfully",
+        "network": serialize_network(graph),
+    }
+
+
+@app.post("/network/clear", tags=["Network Model"])
+def clear_network():
+    """Clears all nodes and edges from the network, providing a genuinely empty network."""
+    global graph
+    graph = nx.DiGraph()
+    return {
+        "message": "Network cleared successfully",
         "network": serialize_network(graph),
     }
 
