@@ -306,6 +306,19 @@ def add_device(payload: DeviceCreateRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@app.get("/network/devices/{device_id}/criticality-recommendation", tags=["Network Model"])
+def get_criticality_recommendation(device_id: str):
+    """
+    Returns deterministic, explainable criticality recommendation for a device in the active network,
+    including suggested score (1-5), confidence, explanation, and missing information.
+    """
+    if device_id not in graph:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Device '{device_id}' does not exist.")
+    from criticality import recommend_device_criticality
+    rec = recommend_device_criticality(dict(graph.nodes[device_id]), graph=graph)
+    return rec
+
+
 @app.patch("/network/devices/{device_id}", tags=["Network Model"])
 def update_device(device_id: str, payload: DeviceUpdateRequest):
     try:
@@ -335,12 +348,15 @@ def add_connection(payload: ConnectionCreateRequest):
             target=data["target"],
             protocol=data["protocol"],
             allowed=data["allowed"],
+            policy_status=data.get("policy_status"),
             business_critical=data["business_critical"],
             disruption_cost=data["disruption_cost"],
             observed=data.get("observed", False),
             port=data.get("port"),
             count=data.get("count"),
             timestamp=data.get("timestamp"),
+            first_seen=data.get("first_seen"),
+            last_seen=data.get("last_seen"),
             metadata=data.get("metadata"),
         )
         return {"message": "Connection added successfully", "connection": added}

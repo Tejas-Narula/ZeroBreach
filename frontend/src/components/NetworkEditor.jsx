@@ -1,8 +1,22 @@
 import { useState, useEffect } from 'react'
+import { api } from '../api'
 
-const DEVICE_TYPES = ['server', 'database', 'laptop', 'workstation', 'firewall', 'router']
-const PROTOCOLS = ['HTTPS', 'SSH', 'SQL', 'TCP', 'HTTP', 'RDP']
-const ZONES = ['internal', 'restricted', 'dmz', 'employee', 'perimeter', 'management']
+export const MAJOR_DEVICE_CATEGORIES = [
+  { value: 'endpoint', label: 'Endpoint (workstation, laptop, desktop)' },
+  { value: 'server', label: 'Server (application, web, service)' },
+  { value: 'database', label: 'Database (relational, distributed data store)' },
+  { value: 'network_device', label: 'Network Device (router, switch, hub)' },
+  { value: 'firewall', label: 'Firewall (perimeter, security gateway)' },
+  { value: 'wireless_access_point', label: 'Wireless Access Point (Wi-Fi AP)' },
+  { value: 'cloud_infrastructure', label: 'Cloud Infrastructure (compute, VPC)' },
+  { value: 'security_system', label: 'Security System (IDS/IPS, SIEM)' },
+  { value: 'iot_device', label: 'IoT Device (cameras, sensors, controllers)' },
+  { value: 'external', label: 'External (internet endpoint, third-party)' },
+  { value: 'unknown', label: 'Unknown (unclassified device)' },
+]
+
+const PROTOCOLS = ['HTTPS', 'SSH', 'SQL', 'TCP', 'HTTP', 'RDP', 'DNS', 'SMB']
+const ZONES = ['internal', 'restricted', 'dmz', 'employee', 'perimeter', 'management', 'external']
 
 export default function NetworkEditor({
   network,
@@ -27,8 +41,15 @@ export default function NetworkEditor({
     type: 'server',
     criticality: 3,
     zone: 'internal',
+    inferred_role: '',
+    manual_override: false,
+    hostname: '',
+    discovery_source: 'manual',
+    ip_addresses_str: '',
   })
   const [isEditingDevice, setIsEditingDevice] = useState(false)
+  const [recommendation, setRecommendation] = useState(null)
+  const [loadingRec, setLoadingRec] = useState(false)
 
   // Connection form state
   const [connForm, setConnForm] = useState({
@@ -36,8 +57,10 @@ export default function NetworkEditor({
     target: '',
     protocol: 'HTTPS',
     allowed: true,
+    policy_status: 'allowed',
     business_critical: false,
     disruption_cost: 1.0,
+    port: '',
   })
   const [isEditingConn, setIsEditingConn] = useState(false)
   const [formError, setFormError] = useState('')
@@ -50,19 +73,27 @@ export default function NetworkEditor({
         setDeviceForm({
           id: node.id,
           name: node.name || node.id,
-          type: node.type || 'server',
-          criticality: node.criticality || 1,
+          type: node.type || 'unknown',
+          criticality: node.criticality || 2,
           zone: node.zone || 'internal',
+          inferred_role: node.inferred_role || '',
+          manual_override: !!node.manual_override,
+          hostname: node.hostname || '',
+          discovery_source: node.discovery_source || 'manual',
+          ip_addresses_str: (node.ip_addresses || []).join(', '),
         })
         setIsEditingDevice(true)
         setActiveTab('device')
         setFormError('')
+
+        // Fetch deterministic recommendation
+        fetchRecommendation(node.id)
         return
       }
     }
-    // If no node selected, stay in new device mode
     if (!selectedNodeId) {
       setIsEditingDevice(false)
+      setRecommendation(null)
     }
   }, [selectedNodeId, network])
 
@@ -71,13 +102,16 @@ export default function NetworkEditor({
     if (selectedEdge && network?.edges) {
       const edge = network.edges.find((e) => e.source === selectedEdge.source && e.target === selectedEdge.target)
       if (edge) {
+        const policyStatus = edge.policy_status || (edge.allowed ? 'allowed' : 'denied')
         setConnForm({
           source: edge.source,
           target: edge.target,
           protocol: edge.protocol || 'TCP',
           allowed: edge.allowed !== undefined ? edge.allowed : true,
+          policy_status: policyStatus,
           business_critical: !!edge.business_critical,
           disruption_cost: edge.disruption_cost !== undefined ? edge.disruption_cost : 1.0,
+          port: edge.port ? String(edge.port) : '',
         })
         setIsEditingConn(true)
         setActiveTab('connection')
@@ -86,23 +120,17 @@ export default function NetworkEditor({
     }
   }, [selectedEdge, network])
 
-  const resetDeviceForm = () => {
-    setDeviceForm({ id: '', name: '', type: 'server', criticality: 3, zone: 'internal' })
-    setIsEditingDevice(false)
-    setFormError('')
-  }
-
-  const resetConnForm = () => {
-    setConnForm({
-      source: network?.nodes?.[0]?.id || '',
-      target: network?.nodes?.[1]?.id || '',
-      protocol: 'HTTPS',
-      allowed: true,
-      business_critical: false,
-      disruption_cost: 1.0,
-    })
-    setIsEditingConn(false)
-    setFormError('')
+  async function fetchRecommendation(devId) {
+    if (!devId) return
+    setLoadingRec(true)
+    try {
+      const rec = await api.getCriticalityRecommendation(devId)
+      setRecommendation(rec)
+    } catch {
+      setRecommendation(null)
+    } finally {
+      setLoadingRec(false)
+    }
   }
 
   const handleDeviceSubmit = async (e) => {
@@ -113,6 +141,10 @@ export default function NetworkEditor({
       return
     }
 
+    const ips = deviceForm.ip_addresses_str
+      ? deviceForm.ip_addresses_str.split(',').map((s) => s.trim()).filter(Boolean)
+      : []
+
     if (isEditingDevice) {
       try {
         await onUpdateDevice(deviceForm.id, {
@@ -120,14 +152,16 @@ export default function NetworkEditor({
           type: deviceForm.type,
           criticality: Number(deviceForm.criticality),
           zone: deviceForm.zone.trim(),
+          inferred_role: deviceForm.inferred_role.trim() || null,
+          manual_override: deviceForm.manual_override,
+          hostname: deviceForm.hostname.trim() || null,
+          ip_addresses: ips,
         })
-        // Saving unselects current device & closes/resets editor
         onClose?.()
       } catch (err) {
         setFormError(err.message)
       }
     } else {
-      // Auto-generate ID if empty: e.g. server_3
       let generatedId = deviceForm.id.trim()
       if (!generatedId) {
         const prefix = deviceForm.type || 'node'
@@ -146,6 +180,11 @@ export default function NetworkEditor({
           type: deviceForm.type,
           criticality: Number(deviceForm.criticality),
           zone: deviceForm.zone.trim(),
+          inferred_role: deviceForm.inferred_role.trim() || null,
+          manual_override: deviceForm.manual_override,
+          hostname: deviceForm.hostname.trim() || null,
+          discovery_source: 'manual',
+          ip_addresses: ips,
         })
         onClose?.()
       } catch (err) {
@@ -166,13 +205,17 @@ export default function NetworkEditor({
       return
     }
 
+    const portNum = connForm.port ? parseInt(connForm.port, 10) : undefined
+
     if (isEditingConn) {
       try {
         await onUpdateConnection(connForm.source, connForm.target, {
           protocol: connForm.protocol,
-          allowed: connForm.allowed,
+          allowed: connForm.policy_status === 'allowed',
+          policy_status: connForm.policy_status,
           business_critical: connForm.business_critical,
           disruption_cost: Number(connForm.disruption_cost),
+          port: portNum,
         })
         onClose?.()
       } catch (err) {
@@ -184,9 +227,11 @@ export default function NetworkEditor({
           source: connForm.source,
           target: connForm.target,
           protocol: connForm.protocol,
-          allowed: connForm.allowed,
+          allowed: connForm.policy_status === 'allowed',
+          policy_status: connForm.policy_status,
           business_critical: connForm.business_critical,
           disruption_cost: Number(connForm.disruption_cost),
+          port: portNum,
         })
         onClose?.()
       } catch (err) {
@@ -198,7 +243,7 @@ export default function NetworkEditor({
   const nodes = network?.nodes || []
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full select-none">
       {/* Tab Switcher & Close */}
       <div className="flex items-center justify-between border-b border-white/5 px-4 py-2.5 bg-white/[0.02]">
         <div className="flex gap-1.5">
@@ -242,8 +287,13 @@ export default function NetworkEditor({
         {/* DEVICE FORM */}
         {activeTab === 'device' && (
           <form onSubmit={handleDeviceSubmit} className="space-y-3.5">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-              {isEditingDevice ? `Editing: ${deviceForm.name}` : 'Create New Device'}
+            <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              <span>{isEditingDevice ? `Editing: ${deviceForm.name}` : 'Create New Device'}</span>
+              {isEditingDevice && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${deviceForm.manual_override ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-sky-500/10 text-sky-300 border border-sky-500/20'}`}>
+                  {deviceForm.manual_override ? 'Manual Override 🔒' : 'Automatic Recommendation'}
+                </span>
+              )}
             </div>
 
             <div>
@@ -254,7 +304,7 @@ export default function NetworkEditor({
                 type="text"
                 value={deviceForm.name}
                 onChange={(e) => setDeviceForm({ ...deviceForm, name: e.target.value })}
-                placeholder="e.g. Core App Server"
+                placeholder="e.g. Core Database Cluster"
                 className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500"
                 required
               />
@@ -262,42 +312,83 @@ export default function NetworkEditor({
 
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Type</label>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Category</label>
                 <select
                   value={deviceForm.type}
                   onChange={(e) => setDeviceForm({ ...deviceForm, type: e.target.value })}
                   className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none"
                 >
-                  {DEVICE_TYPES.map((t) => (
-                    <option key={t} value={t} className="bg-zinc-900">{t}</option>
+                  {MAJOR_DEVICE_CATEGORIES.map((c) => (
+                    <option key={c.value} value={c.value} className="bg-zinc-900">{c.label}</option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Criticality (1-5)</label>
+                <label className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-400">
+                  <span>Criticality (1-5)</span>
+                  {recommendation && (
+                    <span className="text-sky-400 font-mono text-[9px]">Rec: C{recommendation.recommended_criticality}</span>
+                  )}
+                </label>
                 <select
                   value={deviceForm.criticality}
-                  onChange={(e) => setDeviceForm({ ...deviceForm, criticality: Number(e.target.value) })}
+                  onChange={(e) => setDeviceForm({ ...deviceForm, criticality: Number(e.target.value), manual_override: true })}
                   className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none font-mono"
                 >
                   {[1, 2, 3, 4, 5].map((c) => (
                     <option key={c} value={c} className="bg-zinc-900">
-                      C{c} {c >= 4 ? '★ High Risk' : ''}
+                      C{c} {c >= 4 ? '★ High Value' : ''}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
+            {/* Recommendation Explanation Card */}
+            {recommendation && (
+              <div className="rounded border border-sky-500/20 bg-sky-500/5 p-2.5 text-[11px] space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-sky-300">
+                    Auto-Criticality Analysis
+                  </span>
+                  <span className="text-[10px] font-mono px-1 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 capitalize">
+                    {recommendation.confidence} confidence
+                  </span>
+                </div>
+                <p className="text-zinc-300 text-[10.5px] leading-relaxed">
+                  {recommendation.explanation}
+                </p>
+                {recommendation.missing_information?.length > 0 && (
+                  <div className="mt-1 text-[10px] text-zinc-400 border-t border-white/5 pt-1">
+                    <span className="text-amber-400/80 font-medium">Missing context: </span>
+                    {recommendation.missing_information.join(' ')}
+                  </div>
+                )}
+                {deviceForm.criticality !== recommendation.recommended_criticality && (
+                  <div className="pt-1 flex items-center justify-between">
+                    <span className="text-[10px] text-amber-300/90">Manually overridden (C{deviceForm.criticality})</span>
+                    <button
+                      type="button"
+                      onClick={() => setDeviceForm({ ...deviceForm, criticality: recommendation.recommended_criticality, manual_override: false })}
+                      className="text-[10px] underline text-sky-400 hover:text-sky-300"
+                    >
+                      Reset to Recommended (C{recommendation.recommended_criticality})
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Zone</label>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Network Zone</label>
                 <input
                   type="text"
                   list="zones-list"
                   value={deviceForm.zone}
                   onChange={(e) => setDeviceForm({ ...deviceForm, zone: e.target.value })}
+                  placeholder="e.g. internal, dmz"
                   className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none"
                 />
                 <datalist id="zones-list">
@@ -308,7 +399,44 @@ export default function NetworkEditor({
               </div>
 
               <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">ID (Optional)</label>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Inferred Role</label>
+                <input
+                  type="text"
+                  value={deviceForm.inferred_role}
+                  onChange={(e) => setDeviceForm({ ...deviceForm, inferred_role: e.target.value })}
+                  placeholder="e.g. Domain Controller"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Hostname / FQDN</label>
+                <input
+                  type="text"
+                  value={deviceForm.hostname}
+                  onChange={(e) => setDeviceForm({ ...deviceForm, hostname: e.target.value })}
+                  placeholder="e.g. dc1.corp.internal"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">IP Address(es)</label>
+                <input
+                  type="text"
+                  value={deviceForm.ip_addresses_str}
+                  onChange={(e) => setDeviceForm({ ...deviceForm, ip_addresses_str: e.target.value })}
+                  placeholder="Comma-separated IPs"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Device ID</label>
                 <input
                   type="text"
                   disabled={isEditingDevice}
@@ -317,6 +445,17 @@ export default function NetworkEditor({
                   placeholder="Auto-generated"
                   className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none disabled:opacity-40 font-mono"
                 />
+              </div>
+              <div className="flex items-center pt-4">
+                <label className="flex items-center gap-1.5 text-xs text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deviceForm.manual_override}
+                    onChange={(e) => setDeviceForm({ ...deviceForm, manual_override: e.target.checked })}
+                    className="accent-sky-500 rounded"
+                  />
+                  <span>Lock Manual Override</span>
+                </label>
               </div>
             </div>
 
@@ -357,10 +496,6 @@ export default function NetworkEditor({
                 </div>
               )}
             </div>
-
-            <p className="text-[10px] text-zinc-500 pt-2 border-t border-white/5">
-              Tip: Drag any device from the left Device Palette directly onto the canvas to place it at that location.
-            </p>
           </form>
         )}
 
@@ -405,7 +540,7 @@ export default function NetworkEditor({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-3 gap-2.5">
               <div>
                 <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Protocol</label>
                 <input
@@ -424,14 +559,32 @@ export default function NetworkEditor({
               </div>
 
               <div>
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Traffic Status</label>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Port (Opt)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={connForm.port}
+                  onChange={(e) => setConnForm({ ...connForm, port: e.target.value })}
+                  placeholder="e.g. 443"
+                  className="w-full rounded bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-zinc-100 outline-none font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-400">Policy Status</label>
                 <select
-                  value={connForm.allowed ? 'allowed' : 'blocked'}
-                  onChange={(e) => setConnForm({ ...connForm, allowed: e.target.value === 'allowed' })}
+                  value={connForm.policy_status}
+                  onChange={(e) => setConnForm({
+                    ...connForm,
+                    policy_status: e.target.value,
+                    allowed: e.target.value === 'allowed',
+                  })}
                   className="w-full rounded bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-zinc-100 outline-none font-mono"
                 >
-                  <option value="allowed" className="bg-zinc-900">Allowed</option>
-                  <option value="blocked" className="bg-zinc-900">Blocked</option>
+                  <option value="allowed" className="bg-zinc-900">Allowed (Traversable)</option>
+                  <option value="denied" className="bg-zinc-900">Denied (Blocked)</option>
+                  <option value="unknown" className="bg-zinc-900">Unknown Policy (Observed only)</option>
                 </select>
               </div>
             </div>
@@ -483,10 +636,6 @@ export default function NetworkEditor({
                 </button>
               )}
             </div>
-
-            <p className="text-[10px] text-zinc-500 pt-2 border-t border-white/5">
-              Tip: You can also connect devices by clicking and holding on a device, dragging to another device, and releasing!
-            </p>
           </form>
         )}
       </div>

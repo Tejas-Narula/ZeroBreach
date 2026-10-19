@@ -23,14 +23,23 @@ export function saveNodePositions(positionsMap) {
 
 // Map device types to icons from /public
 export const TYPE_IMAGE = {
+  endpoint: '/computer.png',
+  server: '/server.png',
+  database: '/database.svg',
+  network_device: '/wifi-router.png',
+  firewall: '/firewall.svg',
+  wireless_access_point: '/wap.svg',
+  cloud_infrastructure: '/cloud.svg',
+  security_system: '/security.svg',
+  iot_device: '/iot.svg',
+  external: '/external.svg',
+  unknown: '/unknown.svg',
+  // Backward compatibility aliases
   laptop: '/computer.png',
   workstation: '/computer.png',
   computer: '/computer.png',
-  server: '/server.png',
-  database: '/server.png',
   router: '/wifi-router.png',
-  firewall: '/hub.png',
-  hub: '/hub.png',
+  hub: '/wifi-router.png',
 }
 
 const style = [
@@ -41,7 +50,7 @@ const style = [
       width: 56,
       height: 56,
       'background-color': '#161b22',
-      'background-image': (n) => TYPE_IMAGE[n.data('type')] || '/server.png',
+      'background-image': (n) => TYPE_IMAGE[n.data('type')] || '/unknown.svg',
       'background-fit': 'contain',
       'background-clip': 'none',
       'background-image-opacity': 0.95,
@@ -58,6 +67,20 @@ const style = [
       'text-background-opacity': 0.85,
       'text-background-padding': 2,
       'text-background-shape': 'roundrectangle',
+    },
+  },
+  {
+    selector: 'node[type = "external"]',
+    style: {
+      'border-style': 'dashed',
+      'border-color': '#f87171',
+    },
+  },
+  {
+    selector: 'node[type = "unknown"]',
+    style: {
+      'border-style': 'dotted',
+      'border-color': '#94a3b8',
     },
   },
   {
@@ -219,10 +242,17 @@ export default function NetworkGraph({
     }
 
     const elements = [
-      ...currentNodes.map((n) => ({
-        data: { ...n, label: `${n.name}\n${n.type} · C${n.criticality}` },
-        position: savedPositions[n.id] ? { ...savedPositions[n.id] } : undefined,
-      })),
+      ...currentNodes.map((n) => {
+        const typeDisplay = (n.type || 'unknown').replace(/_/g, ' ')
+        const overrideMarker = n.manual_override ? '🔒' : ''
+        return {
+          data: {
+            ...n,
+            label: `${n.name}\n${typeDisplay} · C${n.criticality}${overrideMarker}`,
+          },
+          position: savedPositions[n.id] ? { ...savedPositions[n.id] } : undefined,
+        }
+      }),
       ...(network.edges || []).map((e) => ({
         data: { ...e, id: `${e.source}->${e.target}` },
       })),

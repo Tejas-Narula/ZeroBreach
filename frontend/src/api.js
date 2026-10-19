@@ -55,6 +55,7 @@ export const api = {
   addDevice: (body) => request('/network/devices', { method: 'POST', body }),
   updateDevice: (id, body) => request(`/network/devices/${enc(id)}`, { method: 'PATCH', body }),
   deleteDevice: (id) => request(`/network/devices/${enc(id)}`, { method: 'DELETE' }),
+  getCriticalityRecommendation: (id) => request(`/network/devices/${enc(id)}/criticality-recommendation`),
 
   // Connections CRUD
   addConnection: (body) => request('/network/connections', { method: 'POST', body }),

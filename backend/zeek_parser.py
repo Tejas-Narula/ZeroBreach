@@ -16,38 +16,53 @@ MAX_FILE_BYTES = 50 * 1024 * 1024  # 10 MB upload limit
 MAX_RECORDS = 50_000               # 50,000 log records limit
 
 
-# Common service hints mapped to inferred device type
+# Common service hints mapped to major device category and inferred role
 SERVICE_TYPE_HINTS = {
-    "http": "server",
-    "ssl": "server",
-    "https": "server",
-    "ssh": "server",
-    "dns": "server",
-    "dhcp": "router",
-    "smb": "server",
-    "mysql": "database",
-    "postgresql": "database",
-    "oracle": "database",
-    "rdp": "workstation",
-    "ftp": "server",
-    "smtp": "server",
-    "imap": "server",
+    "http": ("server", "Web Server"),
+    "ssl": ("server", "Secure Web/TLS Service"),
+    "https": ("server", "Web Server"),
+    "ssh": ("server", "SSH Remote Management"),
+    "dns": ("server", "Domain Name Service"),
+    "dhcp": ("network_device", "DHCP Server / Gateway"),
+    "smb": ("server", "File Sharing / SMB"),
+    "mysql": ("database", "MySQL Database"),
+    "postgresql": ("database", "PostgreSQL Database"),
+    "oracle": ("database", "Oracle Database"),
+    "rdp": ("endpoint", "Remote Desktop Workstation"),
+    "ftp": ("server", "File Transfer Server"),
+    "smtp": ("server", "Mail Transfer Server"),
+    "imap": ("server", "Mail Delivery Server"),
+    "ldap": ("server", "Directory & Authentication Service"),
+    "kerberos": ("server", "Kerberos Authentication Server"),
+    "snmp": ("network_device", "Network Management Agent"),
+    "mqtt": ("iot_device", "IoT Telemetry Broker"),
+    "coap": ("iot_device", "IoT Sensor Interface"),
+    "rtsp": ("iot_device", "Streaming Camera"),
 }
 
-# Common destination ports mapped to inferred device types
+# Common destination ports mapped to major device categories and inferred roles
 PORT_TYPE_HINTS = {
-    80: "server",
-    443: "server",
-    8080: "server",
-    8443: "server",
-    22: "server",
-    53: "server",
-    3306: "database",
-    5432: "database",
-    1521: "database",
-    1433: "database",
-    3389: "workstation",
-    445: "server",
+    80: ("server", "HTTP Web Server"),
+    443: ("server", "HTTPS Web Server"),
+    8080: ("server", "HTTP Proxy / App Server"),
+    8443: ("server", "HTTPS App Server"),
+    22: ("server", "SSH Server"),
+    53: ("server", "DNS Server"),
+    389: ("server", "LDAP Authentication Server"),
+    88: ("server", "Kerberos Authentication Server"),
+    3306: ("database", "MySQL Database Server"),
+    5432: ("database", "PostgreSQL Database Server"),
+    1521: ("database", "Oracle Database Server"),
+    1433: ("database", "Microsoft SQL Server"),
+    27017: ("database", "MongoDB Server"),
+    6379: ("database", "Redis Cache / DB"),
+    3389: ("endpoint", "RDP Workstation / Endpoint"),
+    445: ("server", "SMB / File Server"),
+    161: ("network_device", "SNMP Managed Switch / Router"),
+    162: ("network_device", "SNMP Trap Receiver"),
+    1883: ("iot_device", "MQTT IoT Broker"),
+    8883: ("iot_device", "Secure MQTT IoT Broker"),
+    554: ("iot_device", "RTSP IP Camera"),
 }
 
 
@@ -387,47 +402,88 @@ def process_zeek_log_to_network(
             ip_ports.setdefault(dst, set()).add(flow["port"])
 
     nodes: List[Dict[str, Any]] = []
+    from criticality import recommend_device_criticality, normalize_device_type
+
     for ip in sorted(discovered_ips):
         device_id = sanitize_device_id(ip)
 
         # Check user-supplied override first
         override = device_overrides.get(ip) or device_overrides.get(device_id) or {}
+        has_manual_override = bool(override)
 
-        # Tentative classification heuristics (conservative)
-        inferred_type = "generic"
+        # Tentative classification heuristics (conservative & honest)
+        inferred_type = "unknown"
+        inferred_role = None
         services = ip_services.get(ip, set())
         ports = ip_ports.get(ip, set())
 
         # Check service hints
-        for s in services:
+        for s in sorted(services):
             if s in SERVICE_TYPE_HINTS:
-                inferred_type = SERVICE_TYPE_HINTS[s]
+                inferred_type, inferred_role = SERVICE_TYPE_HINTS[s]
                 break
 
-        # Check port hints if still generic
-        if inferred_type == "generic":
-            for p in ports:
+        # Check port hints if still unknown
+        if inferred_type == "unknown":
+            for p in sorted(ports):
                 if p in PORT_TYPE_HINTS:
-                    inferred_type = PORT_TYPE_HINTS[p]
+                    inferred_type, inferred_role = PORT_TYPE_HINTS[p]
                     break
 
-        # If no server indicators and primarily source
-        if inferred_type == "generic":
-            inferred_type = "workstation" if ip_as_resp_count.get(ip, 0) == 0 else "server"
+        # Check if external public IP
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_global and inferred_type == "unknown":
+                inferred_type = "external"
+                inferred_role = "External Internet Endpoint"
+        except ValueError:
+            pass
 
-        name = override.get("name", f"Host {ip}")
-        dev_type = override.get("type", inferred_type)
-        crit = int(override.get("criticality", default_criticality))
-        crit = max(1, min(5, crit))
-        zone = override.get("zone", infer_ip_zone(ip, default_zone))
+        # If no server indicators, strictly private IP, and only observed as originator
+        if inferred_type == "unknown":
+            if ip_as_resp_count.get(ip, 0) == 0:
+                inferred_type = "endpoint"
+                inferred_role = "Client Workstation"
+            else:
+                inferred_type = "server"
+                inferred_role = "General Internal Server"
 
-        nodes.append({
+        # Apply override if specified
+        final_type = normalize_device_type(override.get("type", inferred_type))
+        final_name = override.get("name", f"Host {ip}")
+        final_zone = override.get("zone", infer_ip_zone(ip, default_zone))
+        final_role = override.get("inferred_role", inferred_role)
+
+        # Build candidate device structure
+        candidate_device = {
             "id": device_id,
-            "name": name,
-            "type": dev_type,
-            "criticality": crit,
-            "zone": zone,
-        })
+            "name": final_name,
+            "type": final_type,
+            "zone": final_zone,
+            "inferred_role": final_role,
+            "manual_override": has_manual_override and ("criticality" in override),
+            "ip_addresses": [ip],
+            "hostname": override.get("hostname"),
+            "discovery_source": "zeek",
+            "metadata": {
+                "observed_services": sorted(list(services)),
+                "observed_ports": sorted(list(ports)),
+                "inbound_flows": ip_as_resp_count.get(ip, 0),
+            },
+        }
+
+        # Determine criticality: either user manual override or recommendation engine
+        if "criticality" in override and override["criticality"] is not None:
+            crit = int(override["criticality"])
+            candidate_device["criticality"] = max(1, min(5, crit))
+            candidate_device["manual_override"] = True
+        else:
+            rec = recommend_device_criticality(candidate_device)
+            candidate_device["criticality"] = rec["recommended_criticality"]
+            candidate_device["manual_override"] = False
+            candidate_device["metadata"]["criticality_recommendation"] = rec
+
+        nodes.append(candidate_device)
 
     # 2. Connection Normalization and Aggregation
     # In nx.DiGraph, an ordered pair (u, v) can only hold one edge attribute dict.
@@ -437,6 +493,7 @@ def process_zeek_log_to_network(
     # - Count: Total connection count
     # - Observed: Always True
     # - Allowed: Configurable policy default (default False)
+    # - Policy Status: 'unknown' (distinct from allowed/denied), or 'allowed' if allowed_default is True
     # - Timestamp: Latest observation timestamp
     # - Metadata: Detailed breakdown of UIDs, services, ports, connection states
     edge_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -457,12 +514,15 @@ def process_zeek_log_to_network(
                 "target": dst_id,
                 "protocol": flow["protocol"],
                 "allowed": allowed_default,
+                "policy_status": "allowed" if allowed_default else "unknown",
                 "business_critical": False,
                 "disruption_cost": 1.0,
                 "observed": True,
                 "port": flow["port"],
                 "count": 1,
                 "timestamp": flow["ts"],
+                "first_seen": flow["ts"],
+                "last_seen": flow["ts"],
                 "metadata": {
                     "source_ip": flow["orig_h"],
                     "target_ip": flow["resp_h"],

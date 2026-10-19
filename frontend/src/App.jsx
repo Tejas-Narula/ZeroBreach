@@ -139,7 +139,7 @@ export default function App() {
   async function handleQuickAddDevice(clickPos) {
     const existing = network?.nodes || []
     const count = existing.length + 1
-    const types = ['server', 'database', 'workstation', 'firewall', 'router', 'laptop']
+    const types = ['server', 'database', 'endpoint', 'firewall', 'network_device', 'cloud_infrastructure']
     const zones = ['internal', 'dmz', 'restricted', 'employee']
 
     const type = types[(count - 1) % types.length]
