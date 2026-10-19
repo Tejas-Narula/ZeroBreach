@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query, status
+import json
 from typing import Optional, List
+from fastapi import FastAPI, HTTPException, Query, status, UploadFile, File, Form
 import networkx as nx
 
 from network import (
@@ -11,6 +12,12 @@ from network import (
     add_connection_to_graph,
     update_connection_in_graph,
     remove_connection_from_graph,
+    build_network_from_records,
+    merge_network_records,
+)
+from zeek_parser import (
+    process_zeek_log_to_network,
+    MAX_FILE_BYTES,
 )
 from algorithms import (
     find_reachable_devices,
@@ -28,6 +35,8 @@ from schemas import (
     ConnectionUpdateRequest,
     MultiDeviceAnalysisRequest,
     ContainmentSimulationRequest,
+    NetworkPreviewRequest,
+    ZeekImportResponse,
 )
 
 app = FastAPI(
@@ -103,6 +112,186 @@ def clear_network():
     }
 
 
+@app.post("/network/preview", tags=["Network Model"])
+def preview_network(payload: NetworkPreviewRequest):
+    """
+    Validates and simulates building a graph from structured candidate records in isolation.
+    Does not modify the active network state.
+    """
+    try:
+        nodes_data = [n.model_dump() for n in payload.nodes]
+        edges_data = [e.model_dump() for e in payload.edges]
+        preview_graph = build_network_from_records(nodes_data, edges_data)
+        return {
+            "valid": True,
+            "nodes_count": preview_graph.number_of_nodes(),
+            "edges_count": preview_graph.number_of_edges(),
+            "network": serialize_network(preview_graph),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/network/replace", tags=["Network Model"])
+def replace_network(payload: NetworkPreviewRequest):
+    """
+    Safely validates and replaces the active network with candidate structured records.
+    If validation fails, the active network is left untouched.
+    """
+    global graph
+    try:
+        nodes_data = [n.model_dump() for n in payload.nodes]
+        edges_data = [e.model_dump() for e in payload.edges]
+        new_graph = build_network_from_records(nodes_data, edges_data)
+        graph = new_graph
+        return {
+            "message": "Active network successfully replaced",
+            "nodes_count": graph.number_of_nodes(),
+            "edges_count": graph.number_of_edges(),
+            "network": serialize_network(graph),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/network/import/zeek", tags=["Network Model"])
+async def import_zeek_logs(
+    file: UploadFile = File(..., description="Zeek connection log file (.log, .tsv, .json)"),
+    mode: str = Form("replace", description="Import mode: 'preview', 'replace', or 'merge'"),
+    default_criticality: int = Form(2, ge=1, le=5, description="Default criticality for discovered hosts (1-5)"),
+    default_zone: str = Form("internal", description="Default network zone for discovered hosts"),
+    allowed_default: bool = Form(False, description="Whether observed connections should default to policy allowed"),
+    preserve_existing_nodes: bool = Form(True, description="When merging, preserve existing device metadata"),
+    device_overrides: Optional[str] = Form(None, description="Optional JSON string of device overrides by IP or ID"),
+):
+    """
+    Imports and processes a Zeek connection log (JSON or TSV format).
+    - Validates file size (up to 10MB) and format.
+    - Extracts IP endpoints, services, ports, timestamps, and metadata.
+    - Deterministically aggregates directed connections.
+    - In 'preview' mode, returns the candidate network without mutating the active graph.
+    - In 'replace' mode, safely replaces the active graph with the imported network.
+    - In 'merge' mode, combines the imported network with the active graph according to conflict rules.
+    - Safe rollback: if validation or parsing fails, active network is completely untouched.
+    """
+    global graph
+
+    valid_modes = ["preview", "replace", "merge"]
+    if mode not in valid_modes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid import mode '{mode}'. Choose from: {', '.join(valid_modes)}.",
+        )
+
+    # 1. Read and validate file content
+    try:
+        content_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read uploaded file: {str(e)}",
+        )
+
+    if not content_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file is empty.",
+        )
+
+    if len(content_bytes) > MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {MAX_FILE_BYTES // (1024 * 1024)}MB.",
+        )
+
+    try:
+        raw_text = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            raw_text = content_bytes.decode("latin-1")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File encoding error: Unable to decode log file as UTF-8 or Latin-1 text.",
+            )
+
+    # 2. Parse overrides if provided
+    overrides_dict = {}
+    if device_overrides and isinstance(device_overrides, str) and device_overrides.strip():
+        try:
+            parsed_ov = json.loads(device_overrides)
+            if isinstance(parsed_ov, dict):
+                overrides_dict = parsed_ov
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Malformed device_overrides parameter. Expected valid JSON object.",
+            )
+
+    # 3. Parse and aggregate Zeek records
+    try:
+        parsed_result = process_zeek_log_to_network(
+            raw_text=raw_text,
+            default_criticality=default_criticality,
+            default_zone=default_zone,
+            allowed_default=allowed_default,
+            device_overrides=overrides_dict,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Zeek parsing error: {str(e)}",
+        )
+
+    new_nodes = parsed_result["nodes"]
+    new_edges = parsed_result["edges"]
+    statistics = parsed_result["statistics"]
+    warnings = parsed_result["warnings"]
+
+    # 4. Construct candidate graph in isolation
+    try:
+        if mode == "merge":
+            candidate_graph = merge_network_records(
+                base_graph=graph,
+                new_nodes=new_nodes,
+                new_edges=new_edges,
+                preserve_existing_nodes=preserve_existing_nodes,
+            )
+        else:
+            # preview or replace: build clean candidate graph
+            candidate_graph = build_network_from_records(new_nodes, new_edges)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Graph construction error: {str(e)}",
+        )
+
+    serialized_candidate = serialize_network(candidate_graph)
+
+    # 5. Apply state changes if requested
+    if mode == "replace":
+        graph = candidate_graph
+        message = f"Network successfully replaced with {candidate_graph.number_of_nodes()} devices and {candidate_graph.number_of_edges()} connections."
+    elif mode == "merge":
+        graph = candidate_graph
+        message = f"Network successfully merged. Active network now has {candidate_graph.number_of_nodes()} devices and {candidate_graph.number_of_edges()} connections."
+    else:
+        # preview
+        message = f"Preview generated: {candidate_graph.number_of_nodes()} devices and {candidate_graph.number_of_edges()} connections ready for import."
+
+    return {
+        "status": "success",
+        "mode": mode,
+        "message": message,
+        "statistics": statistics,
+        "warnings": warnings,
+        "nodes_count": candidate_graph.number_of_nodes(),
+        "edges_count": candidate_graph.number_of_edges(),
+        "network": serialized_candidate,
+    }
+
+
+
 # -------------------------------------------------------------------------
 # Network Modification (CRUD)
 # -------------------------------------------------------------------------
@@ -148,6 +337,11 @@ def add_connection(payload: ConnectionCreateRequest):
             allowed=data["allowed"],
             business_critical=data["business_critical"],
             disruption_cost=data["disruption_cost"],
+            observed=data.get("observed", False),
+            port=data.get("port"),
+            count=data.get("count"),
+            timestamp=data.get("timestamp"),
+            metadata=data.get("metadata"),
         )
         return {"message": "Connection added successfully", "connection": added}
     except ValueError as e:

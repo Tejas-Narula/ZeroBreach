@@ -6,6 +6,7 @@ import ContainmentPanel from './components/ContainmentPanel'
 import NetworkEditor from './components/NetworkEditor'
 import NodePalette, { currentDraggedTemplate } from './components/NodePalette'
 import AnalysisStatsSidebar from './components/AnalysisStatsSidebar'
+import ZeekImportModal from './components/ZeekImportModal'
 
 const actionKey = (a) =>
   a.action_type === 'block_connection' ? `edge:${a.source}->${a.target}` : `iso:${a.target_device}`
@@ -43,6 +44,9 @@ export default function App() {
   // Connection creation mode: 2-click connection tool
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectSource, setConnectSource] = useState(null)
+
+  // Zeek Log Import modal state
+  const [isImportOpen, setIsImportOpen] = useState(false)
 
   const clearAnalysis = () => {
     setResults(null)
@@ -505,6 +509,14 @@ export default function App() {
           >
             Load Demo
           </button>
+          <button
+            onClick={() => setIsImportOpen(true)}
+            className="rounded bg-emerald-600/20 border border-emerald-500/30 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-600/30 transition flex items-center gap-1.5"
+            title="Import Zeek conn.log (JSON or TSV) into network"
+          >
+            <span className="font-mono text-[10px] bg-emerald-500/20 px-1 rounded">ZK</span>
+            Import Zeek
+          </button>
         </div>
       </header>
 
@@ -742,6 +754,25 @@ export default function App() {
           )}
         </aside>
       </div>
+
+      {/* Zeek Log Ingestion Modal */}
+      <ZeekImportModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onImportSuccess={(res) => {
+          localStorage.removeItem('naia_node_positions_v1')
+          setNetwork(res.network)
+          clearAnalysis()
+          if (res.network?.nodes?.length > 0) {
+            setSelected(res.network.nodes[0].id)
+          } else {
+            setSelected('')
+          }
+          setEditorSelectedNode(null)
+          setEditorSelectedEdge(null)
+          setError('')
+        }}
+      />
     </div>
   )
 }

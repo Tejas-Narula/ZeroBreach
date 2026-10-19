@@ -28,6 +28,28 @@ export const api = {
   getNetwork: () => request('/network'),
   resetNetwork: () => request('/network/reset', { method: 'POST' }),
   clearNetwork: () => request('/network/clear', { method: 'POST' }),
+  previewNetwork: (body) => request('/network/preview', { method: 'POST', body }),
+  replaceNetwork: (body) => request('/network/replace', { method: 'POST', body }),
+  importZeek: async (formData) => {
+    let res
+    try {
+      res = await fetch(`${BASE}/network/import/zeek`, {
+        method: 'POST',
+        body: formData,
+      })
+    } catch {
+      throw new Error(`Cannot reach backend at ${BASE}`)
+    }
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      const detail = data?.detail
+      const msg = Array.isArray(detail)
+        ? detail.map((d) => d.msg).join('; ')
+        : detail || `Import failed (${res.status})`
+      throw new Error(msg)
+    }
+    return data
+  },
   
   // Devices CRUD
   addDevice: (body) => request('/network/devices', { method: 'POST', body }),
