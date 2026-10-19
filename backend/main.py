@@ -27,6 +27,8 @@ from algorithms import (
     find_critical_assets,
     recommend_containment,
     analyze_containment_impact,
+    analyze_service_reachability,
+    analyze_attack_paths,
 )
 from schemas import (
     DeviceCreateRequest,
@@ -37,6 +39,8 @@ from schemas import (
     ContainmentSimulationRequest,
     NetworkPreviewRequest,
     ZeekImportResponse,
+    ServiceReachabilityResponse,
+    AttackPathsAnalysisResponse,
 )
 
 app = FastAPI(
@@ -470,6 +474,38 @@ def get_critical_assets(
         }
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+
+
+@app.get("/analyze/services/{device_id}", response_model=ServiceReachabilityResponse, tags=["Analysis"])
+def get_service_reachability(device_id: str):
+    """
+    Evaluates reachability to all network services from the compromised device.
+    Distinguishes device reachability, port exposure, policy state, and known vulnerabilities.
+    """
+    try:
+        results = analyze_service_reachability(graph, device_id)
+        return results
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+
+
+@app.get("/analyze/attack-paths/{device_id}", response_model=AttackPathsAnalysisResponse, tags=["Analysis"])
+def get_attack_paths(
+    device_id: str,
+    critical_threshold: int = Query(default=4, ge=1, le=5, description="Asset criticality threshold (default 4)"),
+):
+    """
+    Analyzes potential multi-hop attack paths from the compromised device to critical assets,
+    combining topology reachability, service ports, known CVE exploits, and missing evidence flags.
+    """
+    thresh_val = critical_threshold.default if hasattr(critical_threshold, "default") else critical_threshold
+    thresh_val = int(thresh_val)
+    try:
+        results = analyze_attack_paths(graph, device_id, critical_threshold=thresh_val)
+        return results
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+
 
 
 # -------------------------------------------------------------------------

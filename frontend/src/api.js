@@ -70,6 +70,8 @@ export const api = {
   path: (s, t) => request(`/path/${enc(s)}/${enc(t)}`),
   risk: (id) => request(`/risk/${enc(id)}`),
   criticalAssets: (id, threshold) => request(`/critical-assets/${enc(id)}?threshold=${threshold}`),
+  serviceReachability: (id) => request(`/analyze/services/${enc(id)}`),
+  attackPaths: (id, threshold = 4) => request(`/analyze/attack-paths/${enc(id)}?critical_threshold=${threshold}`),
   containment: (id, threshold) => request(`/containment/${enc(id)}?critical_threshold=${threshold}`),
   impact: (id, threshold) => request(`/containment/impact/${enc(id)}?critical_threshold=${threshold}`),
   simulate: (body) => request('/containment/simulate', { method: 'POST', body }),

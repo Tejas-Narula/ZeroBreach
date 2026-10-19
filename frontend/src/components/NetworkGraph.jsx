@@ -245,10 +245,13 @@ export default function NetworkGraph({
       ...currentNodes.map((n) => {
         const typeDisplay = (n.type || 'unknown').replace(/_/g, ' ')
         const overrideMarker = n.manual_override ? '🔒' : ''
+        const sCount = n.services?.length || 0
+        const vCount = n.vulnerabilities?.length || 0
+        const secBadge = vCount > 0 ? ` ⚠️${vCount}` : (sCount > 0 ? ` ⚙${sCount}` : '')
         return {
           data: {
             ...n,
-            label: `${n.name}\n${typeDisplay} · C${n.criticality}${overrideMarker}`,
+            label: `${n.name}${secBadge}\n${typeDisplay} · C${n.criticality}${overrideMarker}`,
           },
           position: savedPositions[n.id] ? { ...savedPositions[n.id] } : undefined,
         }

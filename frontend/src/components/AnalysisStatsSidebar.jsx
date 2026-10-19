@@ -66,7 +66,45 @@ export default function AnalysisStatsSidebar({ results, impact, names, compromis
           )}
         </div>
 
-        {/* Metric Card 3: Aggregate Risk */}
+        {/* Metric Card 3: Attack Paths & Feasibility */}
+        {results?.attackPaths && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/[0.04] p-2.5">
+            <div className="text-[10px] uppercase tracking-wider text-red-400 font-medium">Attack Paths Discovered</div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-xl font-bold font-mono text-red-300">
+                {results.attackPaths.total_attack_paths}
+              </span>
+              <span className="text-[10px] text-zinc-400">paths to critical</span>
+            </div>
+            {results.attackPaths.attack_paths?.length > 0 && (
+              <div className="mt-1.5 text-[10px] text-zinc-400 border-t border-red-500/10 pt-1 flex justify-between">
+                <span>Top Feasibility:</span>
+                <span className="font-mono text-red-300 font-semibold">
+                  {results.attackPaths.attack_paths[0].feasibility_level} ({results.attackPaths.attack_paths[0].feasibility_score}%)
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Metric Card 4: Exposed Services & Vulns */}
+        {results?.services && (
+          <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Service Exposure</div>
+            <div className="mt-1 flex items-baseline justify-between">
+              <div>
+                <span className="text-xl font-bold font-mono text-zinc-100">{results.services.total_services_exposed}</span>
+                <span className="text-[10px] text-zinc-500 ml-1">services</span>
+              </div>
+              <div>
+                <span className="text-sm font-bold font-mono text-red-400">{results.services.services_with_vulnerabilities}</span>
+                <span className="text-[10px] text-zinc-500 ml-1">vulnerable</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Metric Card 5: Aggregate Risk */}
         <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2.5">
           <div className="text-[10px] uppercase tracking-wider text-zinc-500">Aggregate Risk Index</div>
           <div className="mt-1 flex items-baseline gap-1.5">

@@ -46,10 +46,26 @@ export default function NetworkEditor({
     hostname: '',
     discovery_source: 'manual',
     ip_addresses_str: '',
+    services: [],
+    vulnerabilities: [],
   })
   const [isEditingDevice, setIsEditingDevice] = useState(false)
   const [recommendation, setRecommendation] = useState(null)
   const [loadingRec, setLoadingRec] = useState(false)
+
+  // Service modal / quick add state
+  const [newService, setNewService] = useState({ name: '', port: '', protocol: 'tcp', version: '' })
+  const [newVuln, setNewVuln] = useState({
+    id: '',
+    title: '',
+    severity: 'high',
+    cvss_score: '7.5',
+    service_port: '',
+    exploit_available: false,
+    confidence: 'confirmed',
+    evidence: '',
+    cwe: '',
+  })
 
   // Connection form state
   const [connForm, setConnForm] = useState({
@@ -81,6 +97,8 @@ export default function NetworkEditor({
           hostname: node.hostname || '',
           discovery_source: node.discovery_source || 'manual',
           ip_addresses_str: (node.ip_addresses || []).join(', '),
+          services: node.services || [],
+          vulnerabilities: node.vulnerabilities || [],
         })
         setIsEditingDevice(true)
         setActiveTab('device')
@@ -156,6 +174,8 @@ export default function NetworkEditor({
           manual_override: deviceForm.manual_override,
           hostname: deviceForm.hostname.trim() || null,
           ip_addresses: ips,
+          services: deviceForm.services || [],
+          vulnerabilities: deviceForm.vulnerabilities || [],
         })
         onClose?.()
       } catch (err) {
@@ -185,6 +205,8 @@ export default function NetworkEditor({
           hostname: deviceForm.hostname.trim() || null,
           discovery_source: 'manual',
           ip_addresses: ips,
+          services: deviceForm.services || [],
+          vulnerabilities: deviceForm.vulnerabilities || [],
         })
         onClose?.()
       } catch (err) {
@@ -456,6 +478,232 @@ export default function NetworkEditor({
                   />
                   <span>Lock Manual Override</span>
                 </label>
+              </div>
+            </div>
+
+            {/* SERVICES SECTION */}
+            <div className="border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
+                  Configured Services ({deviceForm.services?.length || 0})
+                </span>
+              </div>
+              <div className="space-y-1.5 mb-2.5">
+                {(!deviceForm.services || deviceForm.services.length === 0) ? (
+                  <p className="text-[11px] text-zinc-500 italic">No services registered on this host.</p>
+                ) : (
+                  deviceForm.services.map((s, idx) => (
+                    <div key={idx} className="flex items-center justify-between bg-white/[0.03] border border-white/5 rounded px-2.5 py-1 text-xs">
+                      <div>
+                        <span className="font-semibold text-zinc-200">{s.name}</span>
+                        <span className="text-zinc-400 font-mono ml-2">:{s.port}/{s.protocol}</span>
+                        {s.version && <span className="text-zinc-500 text-[10px] ml-2">({s.version})</span>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = deviceForm.services.filter((_, i) => i !== idx)
+                          setDeviceForm({ ...deviceForm, services: updated })
+                        }}
+                        className="text-red-400 hover:text-red-300 text-xs px-1"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              {/* Add Service Inputs */}
+              <div className="grid grid-cols-4 gap-1.5 bg-black/20 p-2 rounded border border-white/5 text-xs">
+                <input
+                  type="text"
+                  placeholder="Service (e.g. https)"
+                  value={newService.name}
+                  onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+                  className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none"
+                />
+                <input
+                  type="number"
+                  placeholder="Port (e.g. 443)"
+                  value={newService.port}
+                  onChange={(e) => setNewService({ ...newService, port: e.target.value })}
+                  className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none font-mono"
+                />
+                <input
+                  type="text"
+                  placeholder="Version / Banner"
+                  value={newService.version}
+                  onChange={(e) => setNewService({ ...newService, version: e.target.value })}
+                  className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newService.name.trim() || !newService.port) return
+                    const port = parseInt(newService.port, 10)
+                    if (isNaN(port) || port < 1 || port > 65535) return
+                    const item = {
+                      name: newService.name.trim().toLowerCase(),
+                      port,
+                      protocol: newService.protocol || 'tcp',
+                      version: newService.version.trim() || null,
+                      status: 'active',
+                    }
+                    setDeviceForm({
+                      ...deviceForm,
+                      services: [...(deviceForm.services || []), item],
+                    })
+                    setNewService({ name: '', port: '', protocol: 'tcp', version: '' })
+                  }}
+                  className="rounded bg-white/10 text-zinc-200 hover:bg-white/20 text-xs font-medium"
+                >
+                  + Add Service
+                </button>
+              </div>
+            </div>
+
+            {/* VULNERABILITIES SECTION */}
+            <div className="border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
+                  Known Vulnerabilities ({deviceForm.vulnerabilities?.length || 0})
+                </span>
+              </div>
+              <div className="space-y-1.5 mb-2.5">
+                {(!deviceForm.vulnerabilities || deviceForm.vulnerabilities.length === 0) ? (
+                  <p className="text-[11px] text-zinc-500 italic">No vulnerability findings associated.</p>
+                ) : (
+                  deviceForm.vulnerabilities.map((v, idx) => (
+                    <div key={idx} className="bg-white/[0.03] border border-white/5 rounded p-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            v.severity === 'critical' ? 'bg-red-500/20 text-red-300 border border-red-500/40' :
+                            v.severity === 'high' ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40' :
+                            'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40'
+                          }`}>
+                            {v.severity} {v.cvss_score ? `(${v.cvss_score})` : ''}
+                          </span>
+                          <span className="font-semibold text-zinc-200 font-mono">{v.id}</span>
+                          {v.service_port && (
+                            <span className="text-zinc-400 font-mono text-[10px]">port {v.service_port}</span>
+                          )}
+                          {v.exploit_available && (
+                            <span className="px-1 py-0.2 bg-red-950/60 text-red-400 rounded text-[9px] border border-red-800">
+                              Exploit Available
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = deviceForm.vulnerabilities.filter((_, i) => i !== idx)
+                            setDeviceForm({ ...deviceForm, vulnerabilities: updated })
+                          }}
+                          className="text-red-400 hover:text-red-300 text-xs px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="text-zinc-300 mt-1">{v.title}</div>
+                      {v.evidence && <div className="text-zinc-500 text-[10px] mt-0.5 italic">Evidence: {v.evidence}</div>}
+                    </div>
+                  ))
+                )}
+              </div>
+              {/* Add Vuln Inputs */}
+              <div className="space-y-1.5 bg-black/20 p-2 rounded border border-white/5 text-xs">
+                <div className="grid grid-cols-3 gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="CVE ID (e.g. CVE-2023-1234)"
+                    value={newVuln.id}
+                    onChange={(e) => setNewVuln({ ...newVuln, id: e.target.value })}
+                    className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none font-mono"
+                  />
+                  <select
+                    value={newVuln.severity}
+                    onChange={(e) => setNewVuln({ ...newVuln, severity: e.target.value })}
+                    className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none"
+                  >
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="CVSS (0-10)"
+                    value={newVuln.cvss_score}
+                    onChange={(e) => setNewVuln({ ...newVuln, cvss_score: e.target.value })}
+                    className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none font-mono"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Vulnerability Title / Description"
+                    value={newVuln.title}
+                    onChange={(e) => setNewVuln({ ...newVuln, title: e.target.value })}
+                    className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Target Port (optional)"
+                    value={newVuln.service_port}
+                    onChange={(e) => setNewVuln({ ...newVuln, service_port: e.target.value })}
+                    className="rounded bg-white/5 border border-white/10 px-2 py-1 text-zinc-200 text-xs outline-none font-mono"
+                  />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <label className="flex items-center gap-1.5 text-zinc-300 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newVuln.exploit_available}
+                      onChange={(e) => setNewVuln({ ...newVuln, exploit_available: e.target.checked })}
+                      className="accent-red-500 rounded"
+                    />
+                    <span>Public Exploit Available</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newVuln.id.trim() || !newVuln.title.trim()) return
+                      const portNum = newVuln.service_port ? parseInt(newVuln.service_port, 10) : null
+                      const cvss = newVuln.cvss_score ? parseFloat(newVuln.cvss_score) : null
+                      const item = {
+                        id: newVuln.id.trim(),
+                        title: newVuln.title.trim(),
+                        severity: newVuln.severity,
+                        cvss_score: cvss,
+                        service_port: portNum,
+                        exploit_available: newVuln.exploit_available,
+                        confidence: newVuln.confidence || 'confirmed',
+                        evidence: newVuln.evidence || 'Manual security assessment',
+                        cwe: newVuln.cwe || null,
+                      }
+                      setDeviceForm({
+                        ...deviceForm,
+                        vulnerabilities: [...(deviceForm.vulnerabilities || []), item],
+                      })
+                      setNewVuln({
+                        id: '',
+                        title: '',
+                        severity: 'high',
+                        cvss_score: '7.5',
+                        service_port: '',
+                        exploit_available: false,
+                        confidence: 'confirmed',
+                        evidence: '',
+                        cwe: '',
+                      })
+                    }}
+                    className="rounded bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 px-3 py-1 text-xs font-medium"
+                  >
+                    + Add Vulnerability
+                  </button>
+                </div>
               </div>
             </div>
 

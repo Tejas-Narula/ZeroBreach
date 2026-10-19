@@ -316,14 +316,16 @@ export default function App() {
     setError('')
     clearAnalysis()
     try {
-      const [analysis, risk, critical, containment, imp] = await Promise.all([
+      const [analysis, risk, critical, containment, imp, services, attackPaths] = await Promise.all([
         api.analyze(selected),
         api.risk(selected),
         api.criticalAssets(selected, threshold),
         api.containment(selected, threshold),
         api.impact(selected, threshold),
+        api.serviceReachability(selected).catch(() => null),
+        api.attackPaths(selected, threshold).catch(() => null),
       ])
-      setResults({ analysis, risk, critical, containment })
+      setResults({ analysis, risk, critical, containment, services, attackPaths })
       setImpact(imp)
       setEnabled(new Set(containment.recommended_actions.map(actionKey)))
       setPanelMode('analysis')
@@ -732,6 +734,8 @@ export default function App() {
                     analysis={results.analysis}
                     risk={results.risk}
                     critical={results.critical}
+                    services={results.services}
+                    attackPaths={results.attackPaths}
                     names={names}
                     focus={focus}
                     setFocus={setFocus}

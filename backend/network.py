@@ -34,6 +34,8 @@ def create_demo_network() -> nx.DiGraph:
             "inferred_role": "Standard Workstation",
             "manual_override": True,
             "discovery_source": "demo",
+            "services": [],
+            "vulnerabilities": [],
         },
         {
             "id": "web_1",
@@ -44,6 +46,38 @@ def create_demo_network() -> nx.DiGraph:
             "inferred_role": "Public Web Frontend",
             "manual_override": True,
             "discovery_source": "demo",
+            "services": [
+                {
+                    "name": "https",
+                    "port": 443,
+                    "protocol": "TCP",
+                    "version": "nginx/1.22.0",
+                    "banner": "nginx/1.22.0 (Ubuntu)",
+                    "status": "active",
+                },
+                {
+                    "name": "http",
+                    "port": 80,
+                    "protocol": "TCP",
+                    "version": "nginx/1.22.0",
+                    "banner": "nginx/1.22.0",
+                    "status": "active",
+                },
+            ],
+            "vulnerabilities": [
+                {
+                    "id": "CVE-2022-41741",
+                    "title": "Nginx Memory Corruption in MP4 Module",
+                    "severity": "high",
+                    "cvss_score": 7.8,
+                    "service_port": 443,
+                    "service_name": "https",
+                    "exploit_available": True,
+                    "confidence": "high",
+                    "evidence": "Observed banner matches vulnerable nginx/1.22.0 branch",
+                    "cwe": "CWE-787",
+                }
+            ],
         },
         {
             "id": "app_1",
@@ -54,6 +88,38 @@ def create_demo_network() -> nx.DiGraph:
             "inferred_role": "Core API Server",
             "manual_override": True,
             "discovery_source": "demo",
+            "services": [
+                {
+                    "name": "https",
+                    "port": 8443,
+                    "protocol": "TCP",
+                    "version": "Node.js Express 4.17",
+                    "banner": "Express API",
+                    "status": "active",
+                },
+                {
+                    "name": "ssh",
+                    "port": 22,
+                    "protocol": "TCP",
+                    "version": "OpenSSH 8.9p1",
+                    "banner": "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
+                    "status": "active",
+                },
+            ],
+            "vulnerabilities": [
+                {
+                    "id": "CVE-2023-38606",
+                    "title": "Remote Code Execution in Core Internal API Engine",
+                    "severity": "critical",
+                    "cvss_score": 9.8,
+                    "service_port": 8443,
+                    "service_name": "https",
+                    "exploit_available": True,
+                    "confidence": "confirmed",
+                    "evidence": "Verified unauthenticated endpoint vulnerability with working proof of concept",
+                    "cwe": "CWE-94",
+                }
+            ],
         },
         {
             "id": "db_1",
@@ -64,6 +130,30 @@ def create_demo_network() -> nx.DiGraph:
             "inferred_role": "Production Customer DB",
             "manual_override": True,
             "discovery_source": "demo",
+            "services": [
+                {
+                    "name": "mysql",
+                    "port": 3306,
+                    "protocol": "TCP",
+                    "version": "MySQL 8.0.32",
+                    "banner": "8.0.32-commercial",
+                    "status": "active",
+                }
+            ],
+            "vulnerabilities": [
+                {
+                    "id": "CVE-2023-21980",
+                    "title": "MySQL Server High Privileges Privilege Escalation",
+                    "severity": "high",
+                    "cvss_score": 7.5,
+                    "service_port": 3306,
+                    "service_name": "mysql",
+                    "exploit_available": False,
+                    "confidence": "medium",
+                    "evidence": "Version audit detected Oracle MySQL 8.0.32",
+                    "cwe": "CWE-269",
+                }
+            ],
         },
         {
             "id": "backup_1",
@@ -74,28 +164,46 @@ def create_demo_network() -> nx.DiGraph:
             "inferred_role": "Secondary Backup Server",
             "manual_override": True,
             "discovery_source": "demo",
+            "services": [
+                {
+                    "name": "ssh",
+                    "port": 22,
+                    "protocol": "TCP",
+                    "version": "OpenSSH 8.2p1",
+                    "banner": "SSH-2.0-OpenSSH_8.2p1",
+                    "status": "active",
+                }
+            ],
+            "vulnerabilities": [],
         },
     ]
 
     connections = [
-        ("laptop_1", "web_1", "HTTPS", False, 1.0),
-        ("web_1", "app_1", "HTTPS", True, 2.0),
-        ("app_1", "db_1", "SQL", True, 3.0),
-        ("app_1", "backup_1", "SSH", False, 1.5),
-        ("backup_1", "db_1", "SQL", True, 2.5),
+        ("laptop_1", "web_1", "HTTPS", False, 1.0, 443),
+        ("web_1", "app_1", "HTTPS", True, 2.0, 8443),
+        ("app_1", "db_1", "SQL", True, 3.0, 3306),
+        ("app_1", "backup_1", "SSH", False, 1.5, 22),
+        ("backup_1", "db_1", "SQL", True, 2.5, 3306),
     ]
 
     for device in devices:
         validate_device_data(device)
         graph.add_node(device["id"], **device)
 
-    for source, target, protocol, business_critical, disruption_cost in connections:
+    for item in connections:
+        if len(item) == 6:
+            source, target, protocol, business_critical, disruption_cost, port = item
+        else:
+            source, target, protocol, business_critical, disruption_cost = item[:5]
+            port = None
+
         graph.add_edge(
             source,
             target,
             allowed=True,
             policy_status="allowed",
             protocol=protocol,
+            port=port,
             business_critical=business_critical,
             disruption_cost=disruption_cost,
             observed=True,
@@ -123,6 +231,30 @@ def validate_device_data(data: Dict[str, Any], check_id_present: bool = True) ->
 
     if "zone" in data and (not isinstance(data["zone"], str) or not data["zone"].strip()):
         raise ValueError("Device 'zone' must be a non-empty string.")
+
+    if "services" in data and data["services"] is not None:
+        if not isinstance(data["services"], list):
+            raise ValueError("Device 'services' must be a list of service objects.")
+        for s in data["services"]:
+            if not isinstance(s, dict):
+                raise ValueError("Each service entry must be a dictionary.")
+            if not s.get("name") or not isinstance(s["name"], str):
+                raise ValueError("Service 'name' must be a non-empty string.")
+            if "port" not in s or not isinstance(s["port"], int) or s["port"] < 1 or s["port"] > 65535:
+                raise ValueError("Service 'port' must be an integer between 1 and 65535.")
+
+    if "vulnerabilities" in data and data["vulnerabilities"] is not None:
+        if not isinstance(data["vulnerabilities"], list):
+            raise ValueError("Device 'vulnerabilities' must be a list of vulnerability objects.")
+        for v in data["vulnerabilities"]:
+            if not isinstance(v, dict):
+                raise ValueError("Each vulnerability entry must be a dictionary.")
+            if not v.get("id") or not isinstance(v["id"], str):
+                raise ValueError("Vulnerability 'id' must be a non-empty string.")
+            if not v.get("title") or not isinstance(v["title"], str):
+                raise ValueError("Vulnerability 'title' must be a non-empty string.")
+            if "severity" in v and v["severity"] not in ["critical", "high", "medium", "low", "info"]:
+                raise ValueError("Vulnerability 'severity' must be one of: critical, high, medium, low, info.")
 
 
 def validate_connection_data(graph: nx.DiGraph, source: str, target: str, data: Optional[Dict[str, Any]] = None) -> None:
@@ -185,15 +317,17 @@ def add_device_to_graph(graph: nx.DiGraph, device_data: Dict[str, Any]) -> Dict[
     criticality_val = device_data.get("criticality")
     if criticality_val is not None:
         crit = int(criticality_val)
-        # If user explicitly supplied criticality, flag as manual override unless specified otherwise
         manual_override = device_data.get("manual_override", True)
     else:
-        # Automatically recommend criticality
         temp_data = dict(device_data)
         temp_data["type"] = norm_type
         rec = recommend_device_criticality(temp_data, graph=graph)
         crit = rec["recommended_criticality"]
         manual_override = False
+
+    # Normalize services and vulnerabilities to list of dicts
+    services = [s if isinstance(s, dict) else s.model_dump() for s in (device_data.get("services") or [])]
+    vulnerabilities = [v if isinstance(v, dict) else v.model_dump() for v in (device_data.get("vulnerabilities") or [])]
 
     node_attrs = {
         "id": device_id,
@@ -208,6 +342,8 @@ def add_device_to_graph(graph: nx.DiGraph, device_data: Dict[str, Any]) -> Dict[
         "discovery_source": device_data.get("discovery_source", "manual"),
         "first_seen": device_data.get("first_seen"),
         "last_seen": device_data.get("last_seen"),
+        "services": services,
+        "vulnerabilities": vulnerabilities,
         "metadata": device_data.get("metadata") or {},
     }
     graph.add_node(device_id, **node_attrs)
@@ -238,6 +374,14 @@ def update_device_in_graph(graph: nx.DiGraph, device_id: str, updates: Dict[str,
         existing_ips = set(graph.nodes[device_id].get("ip_addresses") or [])
         existing_ips.update(updates["ip_addresses"])
         graph.nodes[device_id]["ip_addresses"] = sorted(list(existing_ips))
+
+    if "services" in updates and updates["services"] is not None:
+        services = [s if isinstance(s, dict) else s.model_dump() for s in updates["services"]]
+        graph.nodes[device_id]["services"] = services
+
+    if "vulnerabilities" in updates and updates["vulnerabilities"] is not None:
+        vulnerabilities = [v if isinstance(v, dict) else v.model_dump() for v in updates["vulnerabilities"]]
+        graph.nodes[device_id]["vulnerabilities"] = vulnerabilities
 
     if "metadata" in updates and updates["metadata"] is not None:
         existing_meta = graph.nodes[device_id].get("metadata") or {}
