@@ -1,18 +1,98 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Design tokens
+   Surfaces: bg (canvas) < s1 (panels) < s2 (raised) < s3 (hover/inputs)
+   One accent (sky) for actions & selection; semantic colors for meaning only.
+--------------------------------------------------------------------------- */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-bg: #0a0c0f;
+  --color-s1: #0f1216;
+  --color-s2: #151920;
+  --color-s3: #1c212a;
+  --color-line: #232934;
+  --color-line-strong: #2f3642;
+
+  --color-fg: #e4e7ec;
+  --color-fg-muted: #a1a8b3;
+  --color-fg-subtle: #737b88;
+
+  --color-accent: #3b9eff;
+  --color-accent-strong: #2b86e0;
+
+  --color-crit: #e3b341;     /* criticality */
+  --color-danger: #f0605a;   /* compromise, high severity, denied */
+  --color-warn: #e3963e;     /* medium severity, uncertain */
+  --color-ok: #3fb67a;       /* allowed, contained, protected */
+  --color-unknown: #a78bfa;  /* unknown policy / unverified */
 }
 
-html, body, #root {
-  height: 100%;
-}
+html, body, #root { height: 100%; }
 
 body {
   margin: 0;
-  background: #0b0d10;
-  color: #d4d7dc;
+  background: var(--color-bg);
+  color: var(--color-fg);
   font-family: var(--font-sans);
+  font-size: 13px;
   -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@layer components {
+  /* Buttons — fixed 28px control height */
+  .btn {
+    @apply inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary { @apply bg-accent text-white hover:bg-accent-strong; }
+  .btn-secondary { @apply border border-line-strong bg-s2 text-fg hover:bg-s3; }
+  .btn-ghost { @apply text-fg-muted hover:bg-s3 hover:text-fg; }
+  .btn-danger { @apply border border-danger/40 bg-danger/10 text-danger hover:bg-danger/20; }
+  .btn-icon { @apply h-7 w-7 px-0; }
+
+  /* Inputs */
+  .input {
+    @apply h-7 w-full rounded-md border border-line-strong bg-s2 px-2 text-xs text-fg outline-none placeholder:text-fg-subtle focus:border-accent disabled:opacity-50;
+  }
+  .label { @apply mb-1 block text-[11px] font-medium text-fg-muted; }
+  .field-error { @apply mt-1 text-[11px] text-danger; }
+
+  /* Text */
+  .eyebrow { @apply text-[11px] font-semibold uppercase tracking-wider text-fg-subtle; }
+  .mono { @apply font-mono text-[11px]; }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex h-5 items-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] font-semibold leading-none;
+  }
+  .badge-neutral { @apply bg-s3 text-fg-muted; }
+  .badge-accent { @apply bg-accent/15 text-accent; }
+  .badge-danger { @apply bg-danger/15 text-danger; }
+  .badge-warn { @apply bg-warn/15 text-warn; }
+  .badge-ok { @apply bg-ok/15 text-ok; }
+  .badge-crit { @apply bg-crit/15 text-crit; }
+  .badge-unknown { @apply bg-unknown/15 text-unknown; }
+
+  /* Selectable list rows */
+  .row {
+    @apply w-full cursor-pointer rounded-md px-2 py-1.5 text-left transition-colors hover:bg-s3;
+  }
+  .row-active { @apply bg-accent/10 ring-1 ring-accent/40 hover:bg-accent/15; }
+
+  /* Segmented control */
+  .seg { @apply flex rounded-md border border-line bg-s1 p-0.5; }
+  .seg-item { @apply h-6 rounded px-3 text-xs font-medium text-fg-muted transition-colors hover:text-fg; }
+  .seg-item-active { @apply bg-s3 text-fg shadow-sm; }
 }

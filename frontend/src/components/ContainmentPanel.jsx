@@ -1,54 +1,88 @@
-import { Section, Empty, PathText } from './ui'
+import { Section, Empty } from './ui'
 
 const actionKey = (a) =>
   a.action_type === 'block_connection' ? `edge:${a.source}->${a.target}` : `iso:${a.target_device}`
 
-function Metric({ label, before, after, suffix = '' }) {
+function ComparisonRow({ label, before, after, unit = '' }) {
+  const isBetter = before > after
+  const isWorse = after > before
+  const changeTone = isBetter ? 'text-ok' : isWorse ? 'text-danger' : 'text-fg-subtle'
+
   return (
-    <div className="flex justify-between py-1 text-xs">
-      <span className="text-zinc-500">{label}</span>
-      <span className="font-mono">
-        <span className="text-zinc-400">{before}{suffix}</span>
-        <span className="mx-1.5 text-zinc-600">→</span>
-        <span className="text-zinc-100">{after}{suffix}</span>
-      </span>
+    <div className="flex items-center justify-between py-1 text-xs border-b border-line/50 last:border-0">
+      <span className="text-fg-subtle">{label}</span>
+      <div className="flex items-center gap-2 font-mono text-[11px]">
+        <span className="text-fg-muted">{before}{unit}</span>
+        <span className="text-fg-subtle">→</span>
+        <span className={`font-semibold ${changeTone}`}>
+          {after}{unit}
+        </span>
+      </div>
     </div>
   )
 }
 
 export default function ContainmentPanel({
-  containment, impact, enabled, toggleAction, names, focus, setFocus, view, setView, simulating,
+  containment,
+  impact,
+  enabled,
+  toggleAction,
+  names,
+  focus,
+  setFocus,
+  view,
+  setView,
+  simulating,
 }) {
   if (!containment) return null
   const actions = containment.recommended_actions || []
 
   return (
-    <>
-      <Section title="Recommended containment">
+    <div className="space-y-1 border-t border-line">
+      {/* ---------------------------------------------------------------------
+          4. RECOMMENDED CONTAINMENT ACTIONS
+      --------------------------------------------------------------------- */}
+      <Section
+        title="Containment Recommendations"
+        count={actions.length}
+        collapsible
+        defaultOpen={true}
+        right={
+          actions.length > 0 ? (
+            <span className="text-[10px] text-fg-subtle">
+              {enabled.size} of {actions.length} enabled
+            </span>
+          ) : null
+        }
+      >
         {actions.length === 0 ? (
-          <Empty>{containment.message || 'No containment actions needed.'}</Empty>
+          <Empty>{containment.message || 'No containment actions required.'}</Empty>
         ) : (
-          <ul className="space-y-1.5">
+          <div className="space-y-1.5">
             {actions.map((a) => {
               const key = actionKey(a)
-              const target =
-                a.action_type === 'block_connection'
-                  ? <PathText path={[a.source, a.target]} names={names} />
-                  : <span className="font-mono text-[11px] text-zinc-400">{names[a.target_device] || a.target_device}</span>
+              const isChecked = enabled.has(key)
+              const isSelected = focus?.key === key
+
               return (
-                <li
+                <div
                   key={key}
-                  className={`flex gap-2 rounded px-2 py-1.5 ${focus?.key === key ? 'bg-sky-500/10' : 'hover:bg-white/[0.03]'}`}
+                  className={`flex items-start gap-2.5 rounded-md border p-2 transition-colors ${
+                    isSelected
+                      ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
+                      : 'border-line bg-s2/40 hover:bg-s2/80'
+                  }`}
                 >
                   <input
                     type="checkbox"
-                    checked={enabled.has(key)}
+                    checked={isChecked}
                     onChange={() => toggleAction(key)}
-                    className="mt-0.5 accent-sky-500"
-                    title="Include in simulation"
+                    className="mt-1 accent-accent cursor-pointer"
+                    title="Toggle action in simulation"
                   />
+
                   <div
-                    className="flex-1 cursor-pointer"
+                    className="flex-1 cursor-pointer min-w-0"
                     onClick={() =>
                       setFocus(
                         a.action_type === 'block_connection'
@@ -57,71 +91,134 @@ export default function ContainmentPanel({
                       )
                     }
                   >
-                    <div className="flex justify-between text-xs">
-                      <span className="text-zinc-200">
-                        {a.action_type === 'block_connection' ? 'Block connection' : 'Isolate device'}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`badge ${
+                            a.action_type === 'block_connection' ? 'badge-warn' : 'badge-danger'
+                          }`}
+                        >
+                          {a.action_type === 'block_connection' ? 'Block Link' : 'Isolate Device'}
+                        </span>
+                        <span className="mono text-xs font-semibold text-fg truncate">
+                          {a.action_type === 'block_connection'
+                            ? `${names[a.source] || a.source} → ${names[a.target] || a.target}`
+                            : names[a.target_device] || a.target_device}
+                        </span>
+                      </div>
+                      <span className="mono text-[10px] text-fg-subtle shrink-0">
+                        Cost: {a.cost}
                       </span>
-                      <span className="font-mono text-zinc-500">cost {a.cost}</span>
                     </div>
-                    {target}
-                    <div className="text-[11px] text-emerald-400/80">
-                      Protects: {(a.protected_assets || []).map((id) => names[id] || id).join(', ') || '—'}
+
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-ok">
+                      <span className="text-fg-subtle">Protects:</span>
+                      <span className="font-medium truncate">
+                        {(a.protected_assets || []).map((id) => names[id] || id).join(', ') || 'Alternative path reduction'}
+                      </span>
                     </div>
                   </div>
-                </li>
+                </div>
               )
             })}
-          </ul>
+          </div>
         )}
-        {containment.explanation && <p className="mt-2 text-[11px] text-zinc-500">{containment.explanation}</p>}
       </Section>
 
+      {/* ---------------------------------------------------------------------
+          SIMULATION IMPACT COMPARISON (BEFORE VS. AFTER)
+      --------------------------------------------------------------------- */}
       <Section
-        title="Before / after"
+        title="Simulation Impact"
+        collapsible
+        defaultOpen={true}
         right={
-          <div className="flex overflow-hidden rounded border border-white/10 text-[11px]">
-            {['original', 'contained'].map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                disabled={!impact}
-                className={`px-2 py-0.5 capitalize ${view === v ? 'bg-white/10 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
-              >
-                {v}
-              </button>
-            ))}
+          <div className="flex rounded border border-line bg-s2 p-0.5 text-[10px]">
+            <button
+              type="button"
+              onClick={() => setView('original')}
+              disabled={!impact}
+              className={`rounded px-2 py-0.5 font-medium transition-colors ${
+                view === 'original' ? 'bg-s3 text-fg' : 'text-fg-subtle hover:text-fg'
+              }`}
+            >
+              Original
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('contained')}
+              disabled={!impact}
+              className={`rounded px-2 py-0.5 font-medium transition-colors ${
+                view === 'contained' ? 'bg-ok/20 text-ok' : 'text-fg-subtle hover:text-fg'
+              }`}
+            >
+              Contained View
+            </button>
           </div>
         }
       >
-        {simulating && <Empty>Simulating…</Empty>}
-        {!simulating && impact && (
-          <>
-            <Metric label="Reachable devices" before={impact.original_reachable_devices.length - 1} after={impact.remaining_reachable_devices.length - 1} />
-            <Metric label="Critical assets exposed" before={impact.original_exposed_critical_assets.length} after={impact.remaining_exposed_critical_assets.length} />
-            <Metric label="Aggregate risk" before={impact.original_total_risk_score} after={impact.remaining_total_risk_score} />
-            <div className="flex justify-between py-1 text-xs">
-              <span className="text-zinc-500">Risk reduction</span>
-              <span className="font-mono text-emerald-400">
-                {impact.absolute_risk_reduction} ({impact.percentage_risk_reduction}%)
-              </span>
-            </div>
-            <div className="flex justify-between py-1 text-xs">
-              <span className="text-zinc-500">Disruption cost</span>
-              <span className="font-mono text-zinc-300">{impact.total_disruption_cost}</span>
-            </div>
-            <div className="mt-2 text-[11px]">
-              <span className="text-zinc-500">Still exposed: </span>
-              {impact.remaining_exposed_critical_assets.length === 0 ? (
-                <span className="text-emerald-400/80">none</span>
-              ) : (
-                <span className="text-red-300/80">
-                  {impact.remaining_exposed_critical_assets.map((id) => names[id] || id).join(', ')}
-                </span>
-              )}
-            </div>
-          </>
-        )}
+        <div className="space-y-3">
+          {simulating && <Empty>Recalculating containment graph...</Empty>}
+
+          {!simulating && impact && (
+            <>
+              {/* Impact Comparison Table */}
+              <div className="rounded-md border border-line bg-s2/40 p-2.5">
+                <ComparisonRow
+                  label="Reachable Devices"
+                  before={impact.original_reachable_devices.length - 1}
+                  after={impact.remaining_reachable_devices.length - 1}
+                />
+                <ComparisonRow
+                  label="Critical Assets Exposed"
+                  before={impact.original_exposed_critical_assets.length}
+                  after={impact.remaining_exposed_critical_assets.length}
+                />
+                <ComparisonRow
+                  label="Attack Paths to Critical"
+                  before={impact.original_attack_paths_count ?? 0}
+                  after={impact.remaining_attack_paths_count ?? 0}
+                />
+                <ComparisonRow
+                  label="Aggregate Risk Index"
+                  before={impact.original_total_risk_score}
+                  after={impact.remaining_total_risk_score}
+                />
+                <div className="flex items-center justify-between pt-1.5 text-xs">
+                  <span className="text-fg-subtle">Disruption Cost</span>
+                  <span className="mono font-semibold text-fg">
+                    {impact.total_disruption_cost}
+                  </span>
+                </div>
+              </div>
+
+              {/* Status callout: Protected vs. Still Exposed */}
+              <div className="rounded-md border border-line bg-s2/20 p-2.5 space-y-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-fg-subtle">Protected Assets:</span>
+                  <span className="font-semibold text-ok">
+                    {impact.protected_critical_assets?.length > 0
+                      ? impact.protected_critical_assets.map((id) => names[id] || id).join(', ')
+                      : 'None'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-fg-subtle">Residual Critical Exposed:</span>
+                  <span className={`font-semibold ${impact.remaining_exposed_critical_assets?.length > 0 ? 'text-danger' : 'text-ok'}`}>
+                    {impact.remaining_exposed_critical_assets?.length === 0
+                      ? 'None (Fully Contained)'
+                      : impact.remaining_exposed_critical_assets.map((id) => names[id] || id).join(', ')}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[10px] text-fg-subtle italic">
+                * Note: Simulation runs on an isolated in-memory graph copy. No live firewall or host policies are altered.
+              </p>
+            </>
+          )}
+        </div>
       </Section>
-    </>
+    </div>
   )
 }

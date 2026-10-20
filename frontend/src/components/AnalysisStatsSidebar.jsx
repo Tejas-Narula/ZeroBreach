@@ -22,7 +22,7 @@ export default function AnalysisStatsSidebar({ results, impact, names, compromis
   const compromisedName = names[compromisedId] || compromisedId
 
   // Calculate highest risk score or average
-  const maxRisk = highestRiskDevice ? highestRiskDevice.risk_score : 0
+  const _maxRisk = highestRiskDevice ? highestRiskDevice.risk_score : 0
   const totalRisk = risk?.results?.reduce((sum, r) => sum + r.risk_score, 0) || 0
 
   return (
